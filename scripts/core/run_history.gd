@@ -41,3 +41,30 @@ static func record(seed_value: int, mode: String, kills: int, seconds: float) ->
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify(all))
+
+
+const STATS_PATH := "user://stats.json"
+
+
+# Загальна статистика акаунта за всі забіги (меню).
+static func totals() -> Dictionary:
+	if not FileAccess.file_exists(STATS_PATH):
+		return {"runs": 0, "kills": 0, "time": 0, "best": 0}
+	var f := FileAccess.open(STATS_PATH, FileAccess.READ)
+	if f == null:
+		return {"runs": 0, "kills": 0, "time": 0, "best": 0}
+	var data = JSON.parse_string(f.get_as_text())
+	if data is Dictionary:
+		return data
+	return {"runs": 0, "kills": 0, "time": 0, "best": 0}
+
+
+static func record_run(kills: int, seconds: float, level: int) -> void:
+	var t := totals()
+	t["runs"] = int(t["runs"]) + 1
+	t["kills"] = int(t["kills"]) + kills
+	t["time"] = int(t["time"]) + int(seconds)
+	t["best"] = maxi(int(t["best"]), level)
+	var f := FileAccess.open(STATS_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(t))

@@ -7,6 +7,7 @@ extends Node3D
 var clouds: Array = []   # вузли хмар (по 3 пластини), повільно пливуть у tick
 var statics_grid := {}    # Vector2i -> Array колайдерів {x, z, r}, крок Ground.GRID_CELL
 var lava_mat: StandardMaterial3D = null   # спільний матеріал лавових калюж (пульсує в tick)
+var lava_pools: Array = []   # центри калюж {x, z, r} - там лава б'є (див. main.gd)
 var monolith_mats: Array = []   # матеріали рун на монолітах (пульсують)
 
 
@@ -219,7 +220,7 @@ func _scatter_ground(rng: RandomNumberGenerator, terrain: Terrain) -> void:
 	_patch(rng, terrain, "sand", _cone(), 250, 0.16, Color(0.72, 0.62, 0.32))     # сухостій
 	_patch(rng, terrain, "sand", _cone(), 80, 0.08, Color(0.85, 0.78, 0.55))      # суха трава
 	# === Вулкан ===
-	_patch(rng, terrain, "volcano", _disc(), 55, 0.06, Color(1.0, 0.45, 0.1), 2.0, 4.5, 2.8)   # лава
+	_patch(rng, terrain, "volcano", _disc(), 55, 0.06, Color(1.0, 0.45, 0.1), 2.0, 4.5, 2.8, lava_pools, 0.5)   # лава
 	_patch(rng, terrain, "volcano", _dot(), 30, 0.5, Color(1.0, 0.6, 0.2), 0.6, 1.0, 3.5)      # іскри
 	# === Кристали ===
 	_patch(rng, terrain, "crystal", _cone(), 100, 0.12, Color(0.5, 0.8, 0.95), 0.6, 1.1, 0.6)  # крист. шипи
@@ -258,10 +259,11 @@ func _disc() -> Mesh:
 	return m
 
 
-func _patch(rng: RandomNumberGenerator, terrain: Terrain, biome: String, mesh: Mesh, count: int, lift: float, color: Color, s_lo := 0.7, s_hi := 1.4, emission := 0.0) -> void:
+func _patch(rng: RandomNumberGenerator, terrain: Terrain, biome: String, mesh: Mesh, count: int, lift: float, color: Color, s_lo := 0.7, s_hi := 1.4, emission := 0.0, out: Array = [], out_r := 0.0) -> void:
 	var lim := terrain.limit()
 	var poses: Array = []
 	var shades: Array = []
+	var radii: Array = []
 	var tries := 0
 	while poses.size() < count and tries < count * 8:
 		tries += 1
@@ -274,6 +276,7 @@ func _patch(rng: RandomNumberGenerator, terrain: Terrain, biome: String, mesh: M
 		var s := rng.randf_range(s_lo, s_hi)
 		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s)
 		poses.append(Transform3D(b, Vector3(x, terrain.height(x, z) + lift * s, z)))
+		radii.append(out_r * s)
 		var v := rng.randf_range(0.85, 1.08)
 		shades.append(Color(v, v, v))
 	if poses.is_empty():
@@ -301,6 +304,10 @@ func _patch(rng: RandomNumberGenerator, terrain: Terrain, biome: String, mesh: M
 	add_child(mmi)
 	if biome == "volcano":
 		lava_mat = mat
+	for i in poses.size():
+		if float(radii[i]) > 0.0:
+			var pp: Vector3 = poses[i].origin
+			out.append({"x": pp.x, "z": pp.z, "r": float(radii[i])})
 
 
 # Об'ємніші напівпрозорі хмари високо над картою.

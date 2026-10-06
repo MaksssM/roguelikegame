@@ -16,14 +16,18 @@ var adaptive_mode := false
 var weapons: Weapons
 var shrines: Shrines
 var pickups: Pickups
+var trader: Trader
+var portal: Portal
 var hp_bar: ProgressBar
 var hp_label: Label
 var xp_bar: ProgressBar
 var level_label: Label
 var info_label: Label
+var gold_label: Label = null
 var stats_panel: PanelContainer
 var stats_label: Label
 var hud_layer: CanvasLayer
+var minimap_card: PanelContainer = null
 var pause_menu: PauseMenu = null
 var boss_card: PanelContainer = null
 var boss_bar: ProgressBar = null
@@ -44,6 +48,8 @@ var mode_label := ""
 var elapsed := 0.0
 var level := 1     # рівень гравця (XP за вбивства, вибір нагороди в меню)
 var xp := 0
+var gold := 0      # монети з ворогів (торговець)
+var depth := 1     # поверх: портал вниз поглиблює і злить ворогів
 var copied_t := 0.0
 var recorded := false
 var best_before := 0
@@ -85,12 +91,16 @@ func _build_world() -> void:
 
 	player = Player.new()
 	add_child(player)
-	player.setup(terrain, decor.statics_grid)
+	player.setup(terrain, decor.statics_grid, decor.lava_pools)
+	var cls: Dictionary = GameData.CLASS[Settings.cls]
+	player.max_hp = float(cls["hp"])
+	player.hp = float(cls["hp"])
+	player.speed_mult = float(cls["spd"])
 	last_hp = player.max_hp
 
 	enemies = Enemies.new()
 	add_child(enemies)
-	enemies.setup(terrain, player, decor.statics_grid)
+	enemies.setup(terrain, player, decor.statics_grid, decor.lava_pools)
 	enemies.rng = world.spawn_rng
 	enemies.enemy_killed.connect(_on_enemy_killed)
 	enemies.boss_killed.connect(_on_boss_killed)
@@ -109,7 +119,8 @@ func _build_world() -> void:
 	add_child(weapons)
 	weapons.setup(terrain, player, enemies)
 	weapons.rng = world.loot_rng
-	weapons.add_weapon("bolt", "single", "none")   # стартовий набір: прості болти без стихії
+	var cw: Array = GameData.CLASS[Settings.cls]["w"]
+	weapons.add_weapon(cw[0], cw[1], cw[2])   # стартовий набір класу
 
 	shrines = Shrines.new()
 	add_child(shrines)
@@ -121,6 +132,15 @@ func _build_world() -> void:
 	pickups.setup(terrain)
 	pickups.picked.connect(_on_pickup)
 	enemies.drops = pickups
+
+	trader = Trader.new()
+	add_child(trader)
+	trader.setup(terrain, world.value)
+	trader.trade_requested.connect(_on_trade)
+
+	portal = Portal.new()
+	add_child(portal)
+	portal.descended.connect(_on_descend)
 
 	event_t = float(GameData.EVENT["first"])
 	_setup_hud()
@@ -140,6 +160,7 @@ func _process(delta: float) -> void:
 			recorded = true
 			best_before = RunHistory.best_kills(world.value)
 			RunHistory.record(world.value, mode_label, enemies.kills, elapsed)
+			RunHistory.record_run(enemies.kills, elapsed, level)
 			_show_death_panel()
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		player.tick_dead(delta)
@@ -151,6 +172,8 @@ func _process(delta: float) -> void:
 	decor.tick(delta)
 	shrines.tick(delta, player.position)
 	pickups.tick(delta, player.position)
+	trader.tick(delta, player.position, gold)
+	portal.tick(delta, player.position)
 	_update_vignette(delta)
 	_update_hints()
 	if adaptive != null:
@@ -262,9 +285,10 @@ func _show_death_panel() -> void:
 	box.add_child(b)
 
 
-# XP за вбивства; поріг - у _xp_need. Зброя видається тільки через меню рівня.
-func _on_enemy_killed(_total: int) -> void:
+# XP за вбивства + золото; поріг XP - у _xp_need.
+func _on_enemy_killed(_total: int, g: int) -> void:
 	_gain_xp(1)
+	gold += g
 
 
 # Червона виньєтка: спалах при отриманні шкоди + пульс на низькому HP.
@@ -298,10 +322,11 @@ func _update_hints() -> void:
 				return
 
 
-func _on_boss_killed() -> void:
+func _on_boss_killed(pos: Vector3) -> void:
 	_gain_xp(int(GameData.RELIC["boss_xp"]))
 	Engine.time_scale = 0.3   # слоу-мо на вбивство боса (~0.6 с реального часу)
 	slowmo_t = 0.2
+	portal.open_at(pos)
 
 
 func _on_boss_spawned() -> void:
@@ -329,6 +354,96 @@ func _on_pickup(kind: String, pos: Vector3) -> void:
 			weapons.detonate(player.position + Vector3(0, 0.8, 0), "fire", float(p["bomb_dmg"]), float(p["bomb_radius"]))
 			elements.popup_at(pos + Vector3(0, 0.8, 0), Lang.t("pick_bomb"), Color(1.0, 0.6, 0.2))
 	_update_hud()
+
+
+# Спуск порталом: той же сід, поверх глибше, вороги зліші.
+# Гравець, зброя, рівні і статистика лишаються; світ перезбирається.
+func _on_descend() -> void:
+	depth += 1
+	var keep_kills := enemies.kills
+	var keep_dealt := enemies.dealt
+	var keep_fx := enemies.dealt_fx.duplicate()
+	terrain.queue_free()
+	decor.queue_free()
+	enemies.queue_free()
+	elements.queue_free()
+	shrines.queue_free()
+	pickups.queue_free()
+	trader.queue_free()
+	portal.queue_free()
+	minimap_card.queue_free()
+	pending_booms.clear()
+	weapons.clear_field()
+	player.position = Vector3(0, 0, 0)
+	player.vel_y = 0.0
+
+	terrain = Terrain.new()
+	add_child(terrain)
+	terrain.setup(world.value)
+
+	decor = Decor.new()
+	add_child(decor)
+	decor.setup(terrain, world.value)
+
+	player.position = Vector3(0, terrain.height(0, 0), 0)
+
+	enemies = Enemies.new()
+	add_child(enemies)
+	enemies.setup(terrain, player, decor.statics_grid, decor.lava_pools)
+	enemies.rng = world.spawn_rng
+	enemies.depth = depth
+	enemies.kills = keep_kills
+	enemies.dealt = keep_dealt
+	enemies.dealt_fx = keep_fx
+	enemies.enemy_killed.connect(_on_enemy_killed)
+	enemies.boss_killed.connect(_on_boss_killed)
+	enemies.boss_spawned.connect(_on_boss_spawned)
+	enemies.adaptive = adaptive
+
+	elements = Elements.new()
+	add_child(elements)
+	elements.setup(enemies.list)
+	enemies.elements = elements
+
+	shrines = Shrines.new()
+	add_child(shrines)
+	shrines.setup(terrain, world.value)
+	shrines.shrine_used.connect(_on_shrine)
+
+	pickups = Pickups.new()
+	add_child(pickups)
+	pickups.setup(terrain)
+	pickups.picked.connect(_on_pickup)
+	enemies.drops = pickups
+
+	trader = Trader.new()
+	add_child(trader)
+	trader.setup(terrain, world.value)
+	trader.trade_requested.connect(_on_trade)
+
+	portal = Portal.new()
+	add_child(portal)
+	portal.descended.connect(_on_descend)
+
+	event_t = randf_range(float(GameData.EVENT["min"]), float(GameData.EVENT["max"]))
+	_show_banner(Lang.t("depth_banner") % depth)
+	_setup_minimap()
+	_update_hud()
+
+
+func _on_trade(pos: Vector3) -> void:
+	var cost := int(GameData.TRADER["cost"])
+	if gold < cost:
+		return
+	gold -= cost
+	var opts := _level_options()
+	if opts.is_empty():
+		return
+	_apply_level_pick(opts[0])
+	Fx.burst(self, pos, Color(1.0, 0.85, 0.4), 20, 6.0)
+	_update_hud()
+	if not choosing and xp >= _xp_need():
+		_open_level_menu()
 
 
 func _on_shrine(pos: Vector3) -> void:
@@ -522,6 +637,10 @@ func _setup_hud() -> void:
 	info_label = Label.new()
 	info_label.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(info_label)
+	gold_label = Label.new()
+	gold_label.add_theme_font_size_override("font_size", 13)
+	gold_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	vbox.add_child(gold_label)
 	var hint := Label.new()
 	hint.text = Lang.t("hud_tab")
 	hint.add_theme_color_override("font_color", Color(0.55, 0.6, 0.7))
@@ -579,8 +698,8 @@ func _setup_minimap() -> void:
 	hud_layer.add_child(card)
 	var mm := Minimap.new()
 	card.add_child(mm)
-	mm.setup(terrain, player, enemies, shrines)
-
+	mm.setup(terrain, player, enemies, shrines, trader, portal, world.value)
+	minimap_card = card
 
 func _card_panel(pos: Vector2) -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -627,6 +746,7 @@ func _update_hud() -> void:
 	if player.sliding:
 		slide_txt = " · " + Lang.t("hud_slide")
 	info_label.text = (Lang.t("hud_info") % [enemies.kills, _fmt_time(elapsed)]) + slide_txt + combo_txt
+	gold_label.text = "%s · %s" % [Lang.t("hud_gold") % gold, Lang.t("d_depth") % depth]
 	var code_txt := Lang.t("hud_copied") if copied_t > 0.0 else Lang.t("hud_copy")
 	var lines: Array = [
 		"%s   %s: %s   %s" % [mode_label, Lang.t("w_code"), world.code(), code_txt],
@@ -667,6 +787,8 @@ func _game_over_text() -> String:
 		Lang.t("d_stats") % [level, enemies.kills, _fmt_time(elapsed)],
 		Lang.t("hud_diff") % _diff_name(),
 		Lang.t("d_dmg") % int(enemies.dealt + Effects.extra_dealt),
+		Lang.t("d_gold") % gold,
+		Lang.t("d_depth") % depth,
 		Lang.t("d_combo") % elements.max_combo,
 		Lang.t("d_fav") % _fav_element(),
 	]

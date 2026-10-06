@@ -10,6 +10,7 @@ signal boss_spawned
 var terrain: Terrain
 var player: Player
 var col_grid := {}
+var lava: Array = []
 var list: Array = []   # {node, hp, burn, slow, poison, pstack, stun, mark, push, speed_mult, type_mult, tint, base, last_tint, mat, darkmat, hit_cd, react_cd, thorn_cd, biome, resist, etype, ...}
 var elements: Elements   # задається з main.gd
 var adaptive: Adaptive   # null, якщо режим адаптації вимкнено
@@ -19,14 +20,16 @@ var spawned := 0
 var spawn_t := 0.0
 var dealt := 0.0        # всього шкоди за забіг (для статистики)
 var dealt_fx := {}      # шкода по стихіях (для улюбленої)
+var depth := 1          # поверх: множники з GameData.DEPTH
 var drops: Pickups = null   # підбори: шанс дропу при смерті (ставить main.gd)
 var eshots: Array = []  # снаряди плювальників: {node, dir, life}
 
 
-func setup(t: Terrain, p: Player, g: Dictionary) -> void:
+func setup(t: Terrain, p: Player, g: Dictionary, pools: Array) -> void:
 	terrain = t
 	player = p
 	col_grid = g
+	lava = pools
 
 
 func tick(delta: float) -> void:
@@ -108,6 +111,7 @@ func spawn_pack(etype: String, count: int) -> void:
 func _spawn_one(etype: String, pos: Vector3) -> void:
 	var hp_max: float = float(GameData.ENEMY["hp"]) * (1.0 + float(GameData.ENEMY["hp_per_kill"]) * kills)
 	hp_max *= float(GameData.DIFF["ehp"][Settings.diff])
+	hp_max *= 1.0 + float(GameData.DEPTH["hp"]) * (depth - 1)
 	var tcfg: Dictionary = GameData.BOSS if etype == "boss" else GameData.ENEMY_TYPES[etype]
 	hp_max *= float(tcfg["hp"])
 	var built := _build_creature(etype)
@@ -127,12 +131,34 @@ func _spawn_one(etype: String, pos: Vector3) -> void:
 		"burn": 0.0, "slow": 0.0, "poison": 0.0, "pstack": 0, "stun": 0.0, "mark": 0.0,
 		"push": Vector3.ZERO, "speed_mult": 1.0, "type_mult": float(tcfg["spd"]),
 		"tint": tcfg["color"], "base": tcfg["color"], "etype": etype, "hit_r": 1.2 * sc,
+		"flank": _pick_flank(etype),
 		"last_tint": Color(-1, -1, -1, -1), "mat": built["mat"], "darkmat": built["darkmat"],
 		"biome": terrain.biome_at(pos.x, pos.z), "resist": res,
 		"rig": built["rig"], "leg_l": built["leg_l"], "leg_r": built["leg_r"],
 		"arm_l": built["arm_l"], "arm_r": built["arm_r"],
 		"phase": rng.randf() * TAU, "squash": 0.0,
 	})
+
+
+# Чи стоїть точка в лавовій калюжі.
+func _in_lava(pos: Vector3) -> bool:
+	for c in lava:
+		var dx := pos.x - float(c["x"])
+		var dz := pos.z - float(c["z"])
+		var r: float = c["r"]
+		if dx * dx + dz * dz < r * r:
+			return true
+	return false
+
+
+# Сторона обходу для розумного ІІ: -1 зліва, 0 в лоб, 1 справа.
+func _pick_flank(etype: String) -> int:
+	match etype:
+		"runner":
+			return -1 if rng.randi() % 2 == 0 else 1
+		"grunt":
+			return [-1, 0, 1][rng.randi() % 3]
+	return 0
 
 
 # Рулетка типу: бос кожен BOSS_EVERY-й спавн, інші - за вагою серед відкритих.
@@ -164,7 +190,7 @@ func _move(delta: float) -> void:
 	for e in list:
 		var n: Node3D = e["node"]
 		e["biome"] = terrain.biome_at(n.position.x, n.position.z)
-		if e["biome"] == "volcano":
+		if _in_lava(n.position):
 			var ldot := float(GameData.LAVA_DPS) * delta
 			e["hp"] -= ldot
 			Effects.track(ldot, "fire")
@@ -189,10 +215,12 @@ func _move(delta: float) -> void:
 			contact += _spitter_move(e, n, to, dist2, delta, base_speed)
 		elif dist2 > 1.69:
 			var dir := to.normalized()
+			if Settings.diff == 2:
+				dir = _smart_dir(e, n, to, dir)
 			n.position += dir * base_speed * float(e["type_mult"]) * float(e["speed_mult"]) * Ground.speed_mult(terrain, n.position, dir) * delta
 			n.rotation.y = lerp_angle(n.rotation.y, atan2(dir.x, dir.z), minf(delta * 8.0, 1.0))
 		else:
-			contact += float(GameData.ENEMY["contact_dps"]) * float(GameData.DIFF["edmg"][Settings.diff])
+			contact += float(GameData.ENEMY["contact_dps"]) * float(GameData.DIFF["edmg"][Settings.diff]) * (1.0 + float(GameData.DEPTH["dmg"]) * (depth - 1))
 			if dist2 > 0.0001:
 				n.rotation.y = lerp_angle(n.rotation.y, atan2(to.x, to.z), minf(delta * 8.0, 1.0))
 			if player != null and float(player.thorns) > 0.0 and float(e["thorn_cd"]) <= 0.0:
@@ -250,6 +278,43 @@ func _separate() -> void:
 				nb.position.z -= dz * push
 
 
+# Розумний ІІ (складна складність): обхід з флангів, бігуни змійкою,
+# танки прикривають найближчого плевака (йдуть між ним і гравцем).
+func _smart_dir(e: Dictionary, n: Node3D, to: Vector3, dir: Vector3) -> Vector3:
+	if str(e["etype"]) == "tank":
+		var sp = _nearest_spitter(n.position, 30.0)
+		if sp != null:
+			var mid: Vector3 = (player.position + sp["node"].position) * 0.5 - n.position
+			mid.y = 0.0
+			if mid.length() > 0.5:
+				return mid.normalized()
+	var flank := int(e.get("flank", 0))
+	if flank != 0:
+		var side := Vector3(-dir.z, 0.0, dir.x)
+		var wobble := 0.0
+		if str(e["etype"]) == "runner":
+			wobble = sin(float(e["phase"]) * 0.7) * 1.5
+		var goal := to + side * (float(flank) * 4.0 + wobble)
+		goal.y = 0.0
+		if goal.length() > 0.1:
+			return goal.normalized()
+	return dir
+
+
+# Найближчий плевака в радіусі (для прикриття танками).
+func _nearest_spitter(pos: Vector3, radius: float):
+	var best = null
+	var best_d := radius * radius
+	for o in list:
+		if str(o.get("etype", "")) != "spitter":
+			continue
+		var d: float = o["node"].position.distance_squared_to(pos)
+		if d < best_d:
+			best_d = d
+			best = o
+	return best
+
+
 # Плювальник: тримає 10-14 м (підходить здалеку, тікає зблизька, в кільці стрейфиться),
 # стріляє отруйними плювками. Повертає контактну шкоду за кадр.
 func _spitter_move(e: Dictionary, n: Node3D, to: Vector3, dist2: float, delta: float, base_speed: float) -> float:
@@ -260,7 +325,7 @@ func _spitter_move(e: Dictionary, n: Node3D, to: Vector3, dist2: float, delta: f
 		dir = to / dist
 		n.rotation.y = lerp_angle(n.rotation.y, atan2(dir.x, dir.z), minf(delta * 8.0, 1.0))
 	if dist2 < 1.69:
-		contact = float(GameData.ENEMY["contact_dps"])
+		contact = float(GameData.ENEMY["contact_dps"]) * float(GameData.DIFF["edmg"][Settings.diff]) * (1.0 + float(GameData.DEPTH["dmg"]) * (depth - 1))
 	else:
 		var want := Vector3.ZERO
 		if dist > 14.0:
@@ -285,8 +350,11 @@ func _fire_spit(_e: Dictionary, n: Node3D) -> void:
 	var target: Vector3 = player.position + Vector3(0, 1.0, 0)
 	var dir := (target - from).normalized()
 	var node := Util.mesh_instance(Util.shared_sphere(0.5, 1.0, 8, 6), Util.shared_mat(Color(0.5, 1.0, 0.3), 2.0))
-	node.scale = Vector3.ONE * 0.45
+	node.scale = Vector3(0.45, 0.3, 0.45)
 	node.position = from
+	var halo := Util.mesh_instance(Util.shared_sphere(0.5, 1.0, 8, 6), Util.shared_mat(Color(0.5, 1.0, 0.3), 2.0, 0.4))
+	halo.scale = Vector3.ONE * 2.2
+	node.add_child(halo)
 	add_child(node)
 	eshots.append({"node": node, "dir": dir, "life": 3.0})
 
@@ -328,10 +396,10 @@ func _cleanup() -> void:
 		kills += 1
 		if player != null and float(player.lifesteal) > 0.0:
 			player.hp = minf(player.hp + float(player.lifesteal), player.max_hp)
-		enemy_killed.emit(kills)
+		enemy_killed.emit(kills, int(GameData.GOLD.get(str(e["etype"]), 1)))
 		if str(e["etype"]) == "boss":
 			Fx.burst(self, e["node"].position + Vector3(0, 1.0, 0), Color(1.0, 0.85, 0.3), 24, 8.0)
-			boss_killed.emit()
+			boss_killed.emit(e["node"].position)
 
 
 # Значок над ворогом: колір стихії, до якої він найбільш стійкий.

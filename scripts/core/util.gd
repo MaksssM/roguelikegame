@@ -138,6 +138,9 @@ static func warmup() -> void:
 	shared_sphere(0.5, 1.0, 8, 4)
 	shared_sphere(0.5, 1.0, 6, 4)
 	shared_sphere(0.5, 1.0, 7, 5)
+	shared_sphere(0.5, 1.0, 4, 2)   # октаедри льоду/стана/мітки
+	shared_cyl(0.0, 0.12, 0.5)   # шипи мін
+	shared_cyl(0.0, 0.3, 1.2)   # хвіст метеора
 	shared_torus(0.7, 0.85, 8, 16)
 	shared_torus(0.85, 1.0, 8, 28)
 	shared_quad()
@@ -157,6 +160,9 @@ static func warmup() -> void:
 		shared_mat(c, 1.5, 0.45)
 		shared_mat(c, 2.0, 0.8)
 		shared_mat(c, 1.5, 1.0, true)
+		shared_mat(c, 2.0, 0.4)   # ореоли вогню/блискавки
+		shared_mat(c, 3.0)   # спалахи променів
+	shared_mat(Color(1.0, 0.5, 0.15), 2.5, 0.6)   # хвіст метеора
 		shared_mat(c.darkened(0.55))
 	for key in GameData.EFFECT:
 		shared_mat(Color(1, 1, 1).lerp(GameData.EFFECT[key]["color"], 0.35), 3.0)

@@ -16,6 +16,7 @@ const EYE = Color(0.08, 0.08, 0.1)
 
 var terrain: Terrain
 var col_grid := {}
+var lava: Array = []
 var body: Node3D          # повертається за yaw (все тіло)
 var rig: Node3D           # нахил/присідання/смерть
 var cam: Camera3D
@@ -46,9 +47,10 @@ var _leg_r: Node3D
 var _head: Node3D
 
 
-func setup(t: Terrain, g: Dictionary) -> void:
+func setup(t: Terrain, g: Dictionary, pools: Array) -> void:
 	terrain = t
 	col_grid = g
+	lava = pools
 	body = Node3D.new()
 	add_child(body)
 	_build_character()
@@ -60,6 +62,17 @@ func setup(t: Terrain, g: Dictionary) -> void:
 
 func aim_origin() -> Vector3:
 	return global_position + Vector3(0, CHEST_H, 0)
+
+
+# Чи стоїть точка в лавовій калюжі.
+func _in_lava(pos: Vector3) -> bool:
+	for c in lava:
+		var dx := pos.x - float(c["x"])
+		var dz := pos.z - float(c["z"])
+		var r: float = c["r"]
+		if dx * dx + dz * dz < r * r:
+			return true
+	return false
 
 
 func handle_mouse(event: InputEventMouseMotion) -> void:
@@ -84,8 +97,8 @@ func tick(delta: float) -> void:
 	if is_dead():
 		return
 	hp = minf(hp + float(GameData.PLAYER["regen"]) * regen_mult * delta, max_hp)
-	if terrain.biome_at(position.x, position.z) == "volcano":
-		hp -= float(GameData.LAVA_DPS) * delta   # лава палить усіх однаково
+	if _in_lava(position):
+		hp -= float(GameData.LAVA_DPS) * delta   # стоїш у калюжі - гориш
 	_move(delta)
 	_update_camera(delta)
 

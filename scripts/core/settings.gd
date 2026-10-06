@@ -20,6 +20,7 @@ static var show_dmg := true   # цифри шкоди над ворогами
 static var diff := 1          # складність: 0 легко, 1 норма, 2 складно
 static var vsync := 1         # 0 вимк, 1 увімк, 2 адаптивний (= DisplayServer.VSYNC_*)
 static var fov := 65.0        # поле зору камери
+static var cls := "ranger"    # клас забігу (вибір на старті)
 
 
 static func reset() -> void:
@@ -35,6 +36,7 @@ static func reset() -> void:
 	diff = 1
 	vsync = 1
 	fov = 65.0
+	cls = "ranger"
 
 
 static func load_all() -> void:
@@ -60,6 +62,9 @@ static func load_all() -> void:
 	diff = clampi(int(cfg.get_value("game", "diff", 1)), 0, 2)
 	vsync = clampi(int(cfg.get_value("game", "vsync", 1)), 0, 2)
 	fov = clampf(float(cfg.get_value("game", "fov", 65.0)), 55.0, 90.0)
+	cls = str(cfg.get_value("game", "cls", "ranger"))
+	if not GameData.CLASS.has(cls):
+		cls = "ranger"
 
 
 static func save() -> void:
@@ -77,6 +82,7 @@ static func save() -> void:
 	cfg.set_value("game", "diff", diff)
 	cfg.set_value("game", "vsync", vsync)
 	cfg.set_value("game", "fov", fov)
+	cfg.set_value("game", "cls", cls)
 	cfg.save(PATH)
 
 

@@ -75,6 +75,36 @@ func _ready() -> void:
 	adaptive_check.text = Lang.t("m_adaptive")
 	box.add_child(adaptive_check)
 
+	var diff_row := HBoxContainer.new()
+	diff_row.add_theme_constant_override("separation", 8)
+	box.add_child(diff_row)
+	var diff_label := Label.new()
+	diff_label.text = Lang.t("s_diff")
+	diff_row.add_child(diff_label)
+	var diff_sel := OptionButton.new()
+	diff_sel.add_item(Lang.t("diff_easy"), 0)
+	diff_sel.add_item(Lang.t("diff_normal"), 1)
+	diff_sel.add_item(Lang.t("diff_hard"), 2)
+	diff_sel.selected = clampi(Settings.diff, 0, 2)
+	diff_sel.item_selected.connect(_on_diff_sel)
+	diff_sel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	diff_row.add_child(diff_sel)
+
+	var cls_row := HBoxContainer.new()
+	cls_row.add_theme_constant_override("separation", 8)
+	box.add_child(cls_row)
+	var cls_label := Label.new()
+	cls_label.text = Lang.t("m_class")
+	cls_row.add_child(cls_label)
+	var cls_sel := OptionButton.new()
+	cls_sel.add_item(Lang.t("cls_warrior"), 0)
+	cls_sel.add_item(Lang.t("cls_mage"), 1)
+	cls_sel.add_item(Lang.t("cls_ranger"), 2)
+	cls_sel.selected = ["warrior", "mage", "ranger"].find(Settings.cls)
+	cls_sel.item_selected.connect(_on_cls_sel)
+	cls_sel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cls_row.add_child(cls_sel)
+
 	_add_header(box, Lang.t("m_world"))
 	_add_button(box, Lang.t("m_random"), _on_random)
 	_add_button(box, Lang.t("m_daily") % WorldSeed.daily_label(), _on_daily)
@@ -112,6 +142,8 @@ func _ready() -> void:
 	box.add_child(message)
 
 	_add_recent(box)
+
+	_add_stats(box)
 
 	box.add_child(HSeparator.new())
 	var controls := Label.new()
@@ -168,6 +200,20 @@ func _add_button(parent: Control, text: String, callback: Callable) -> void:
 	parent.add_child(b)
 
 
+func _add_stats(box: VBoxContainer) -> void:
+	var t := RunHistory.totals()
+	if int(t["runs"]) <= 0:
+		return
+	_add_header(box, Lang.t("st_title"))
+	var l := Label.new()
+	var secs := int(t["time"])
+	l.text = Lang.t("st_line") % [int(t["runs"]), int(t["kills"]), "%d:%02d" % [secs / 60, secs % 60], int(t["best"])]
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", Color(0.6, 0.7, 0.9))
+	l.add_theme_font_size_override("font_size", 13)
+	box.add_child(l)
+
+
 func _add_header(box: VBoxContainer, text: String) -> void:
 	var h := Label.new()
 	h.text = text
@@ -204,6 +250,16 @@ func _on_custom() -> void:
 
 func is_adaptive() -> bool:
 	return adaptive_check.button_pressed
+
+
+func _on_diff_sel(i: int) -> void:
+	Settings.diff = clampi(i, 0, 2)
+	Settings.save()
+
+
+func _on_cls_sel(i: int) -> void:
+	Settings.cls = ["warrior", "mage", "ranger"][clampi(i, 0, 2)]
+	Settings.save()
 
 
 func _build_settings(box: VBoxContainer) -> void:

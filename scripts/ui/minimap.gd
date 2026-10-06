@@ -11,15 +11,29 @@ var _terrain: Terrain
 var _player: Player
 var _enemies: Enemies
 var _shrines: Shrines
+var _trader: Trader
+var _portal: Portal = null
+var _seed := 0
+
+static var _tex_cache := {}   # сід -> текстура (один світ - один запік)
 
 
-func setup(t: Terrain, p: Player, e: Enemies, s: Shrines) -> void:
+func setup(t: Terrain, p: Player, e: Enemies, s: Shrines, tr: Trader, portal: Portal, seed_value: int) -> void:
 	_terrain = t
 	_player = p
 	_enemies = e
 	_shrines = s
+	_trader = tr
+	_portal = portal
+	_seed = seed_value
 	custom_minimum_size = Vector2(180, 180)
-	_render()
+	if _tex_cache.has(seed_value):
+		_tex = _tex_cache[seed_value]
+	else:
+		_render()
+		_tex_cache[seed_value] = _tex
+		while _tex_cache.size() > 3:
+			_tex_cache.erase(_tex_cache.keys()[0])
 
 
 func _render() -> void:
@@ -62,6 +76,10 @@ func _draw() -> void:
 		for s in _shrines.list:
 			if not s["used"]:
 				draw_circle(_to_map(s["pos"]), 3.0, Color(0.4, 0.9, 1.0))
+	if _trader != null and _trader.done:
+		draw_circle(_to_map(_trader.pos), 3.0, Color(1.0, 0.85, 0.3))
+	if _portal != null and _portal.open:
+		draw_circle(_to_map(_portal.position), 4.0, Color(0.7, 0.4, 1.0))
 	if _player != null:
 		var pc := _to_map(_player.position)
 		draw_circle(pc, 3.5, Color.WHITE)

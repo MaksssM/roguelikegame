@@ -232,15 +232,43 @@ func _fire_bolt(w: Dictionary) -> bool:
 	var dmg := _damage(w)
 	var col: Color = GameData.EFFECT[w["f"]]["color"]
 	for i in cnt:
-		# гранований кристал, витягнутий за польотом (меш і матеріал спільні)
-		var b := Util.mesh_instance(Util.shared_sphere(0.5, 1.0, 8, 4), Util.shared_mat(col, 2.5))
-		b.scale = Vector3(0.32, 0.32, 0.85)
+		# зовнішність за стихією: форма + ореол (меші/матеріали спільні)
+		var dress := _bolt_dress(w["f"])
+		var b := Util.mesh_instance(dress["mesh"], Util.shared_mat(col, 2.5))
+		b.scale = dress["sc"]
+		if float(dress["halo"]) > 0.0:
+			var halo := Util.mesh_instance(dress["mesh"], Util.shared_mat(col, 2.0, 0.4))
+			halo.scale = Vector3.ONE * 1.8
+			b.add_child(halo)
 		b.position = player.aim_origin()
 		add_child(b)
 		var dir: Vector3 = base.rotated(Vector3.UP, _angle(i, cnt, spread))
 		b.look_at(b.position + dir)
 		bullets.append({"node": b, "dir": dir, "life": 2.0, "fx": w["f"], "dmg": dmg})
+	_flash(_muzzle(col), 0.08)
 	return true
+
+
+# Зовнішність снаряда за стихією: меш + розмір + чи треба ореол.
+func _bolt_dress(fx: String) -> Dictionary:
+	var crystal := Util.shared_sphere(0.5, 1.0, 8, 4)
+	match fx:
+		"ice", "stun", "mark":
+			return {"mesh": Util.shared_sphere(0.5, 1.0, 4, 2), "sc": Vector3(0.4, 0.4, 0.4), "halo": 0.0}
+		"poison", "force":
+			return {"mesh": crystal, "sc": Vector3(0.45, 0.3, 0.45), "halo": 0.0}
+		"fire", "shock":
+			return {"mesh": crystal, "sc": Vector3(0.32, 0.32, 0.85), "halo": 1.0}
+	return {"mesh": crystal, "sc": Vector3(0.32, 0.32, 0.85), "halo": 0.0}
+
+
+# Короткий спалах у точці пострілу.
+func _muzzle(col: Color) -> MeshInstance3D:
+	var mz := Util.mesh_instance(Util.shared_sphere(0.5, 1.0, 8, 4), Util.shared_mat(col, 3.0))
+	mz.scale = Vector3.ONE * 0.8
+	mz.position = player.aim_origin()
+	add_child(mz)
+	return mz
 
 
 func _fire_beam(w: Dictionary) -> bool:
@@ -277,6 +305,13 @@ func _fire_beam(w: Dictionary) -> bool:
 		core.look_at_from_position(mid, mid + dir)
 		core.scale = Vector3(0.16, 0.16, length)
 		_flash(core, 0.12)
+		# спалахи на дулі і на кінці
+		for tip in [player.aim_origin(), player.aim_origin() + dir * length]:
+			var fl := Util.mesh_instance(Util.shared_sphere(0.5, 1.0, 8, 4), Util.shared_mat(col, 3.0))
+			fl.scale = Vector3.ONE * 0.5
+			fl.position = tip
+			add_child(fl)
+			_flash(fl, 0.12)
 	return true
 
 
@@ -303,7 +338,17 @@ func _fire_mine(w: Dictionary) -> bool:
 		rune.scale = Vector3(0.4, 0.1, 0.4)
 		rune.position = pos + Vector3(0, 0.16, 0)
 		add_child(rune)
-		mines.append({"node": m, "rune": rune, "fx": w["f"], "dmg": dmg, "radius": radius})
+		# шипи по колу основи
+		var spike_mesh := Util.shared_cyl(0.0, 0.12, 0.5)
+		var spike_mat := Util.shared_mat(col, 2.5)
+		var spikes: Array = []
+		for si in 4:
+			var sa := TAU * si / 4.0
+			var spike := Util.mesh_instance(spike_mesh, spike_mat)
+			spike.position = pos + Vector3(cos(sa) * 0.42, 0.2, sin(sa) * 0.42)
+			add_child(spike)
+			spikes.append(spike)
+		mines.append({"node": m, "rune": rune, "spikes": spikes, "fx": w["f"], "dmg": dmg, "radius": radius})
 	return true
 
 
@@ -343,7 +388,10 @@ func _fire_meteor(w: Dictionary) -> bool:
 		rock.scale = Vector3.ONE * 0.7
 		rock.position = pos + Vector3(0, 16, 0)
 		add_child(rock)
-		meteors.append({"pos": pos, "t": delay, "total": delay, "fx": w["f"], "dmg": dmg, "radius": radius, "marker": marker, "rock": rock})
+		var tail := Util.mesh_instance(Util.shared_cyl(0.0, 0.3, 1.2), Util.shared_mat(Color(1.0, 0.5, 0.15), 2.5, 0.6))
+		tail.position = rock.position + Vector3(0, 0.9, 0)
+		add_child(tail)
+		meteors.append({"pos": pos, "t": delay, "total": delay, "fx": w["f"], "dmg": dmg, "radius": radius, "marker": marker, "rock": rock, "tail": tail})
 	return true
 
 
@@ -372,16 +420,30 @@ func _fire_chain(w: Dictionary) -> bool:
 	return true
 
 
-# Тонка світна перемичка між двома точками (для ланцюга).
+# Ламана блискавка між двома точками: 4 сегменти з випадковим зсувом.
 func _bolt_link(a: Vector3, b: Vector3, fx: String) -> MeshInstance3D:
-	var v := Util.mesh_instance(Util.shared_box(Vector3(1, 1, 1)), Util.shared_mat(GameData.EFFECT[fx]["color"], 2.5))
-	add_child(v)
-	var mid := (a + b) * 0.5
-	v.position = mid
-	if a.distance_to(b) > 0.05:
-		v.look_at_from_position(mid, b)
-	v.scale = Vector3(0.12, 0.12, maxf(a.distance_to(b), 0.1))
-	return v
+	var mat := Util.shared_mat(GameData.EFFECT[fx]["color"], 2.5)
+	var mesh := Util.shared_box(Vector3(1, 1, 1))
+	var perp := (b - a).cross(Vector3.UP)
+	if perp.length() < 0.01:
+		perp = Vector3.RIGHT
+	perp = perp.normalized()
+	var offs := [Vector3.ZERO]
+	for i in 3:
+		offs.append(perp * randf_range(-0.6, 0.6))
+	offs.append(Vector3.ZERO)
+	var first: MeshInstance3D = null
+	for i in 4:
+		var p0: Vector3 = a.lerp(b, float(i) / 4.0) + offs[i]
+		var p1: Vector3 = a.lerp(b, float(i + 1) / 4.0) + offs[i + 1]
+		var seg := Util.mesh_instance(mesh, mat)
+		add_child(seg)
+		seg.look_at_from_position((p0 + p1) * 0.5, p1)
+		seg.scale = Vector3(0.1, 0.1, maxf(p0.distance_to(p1), 0.1))
+		_flash(seg, 0.15)
+		if first == null:
+			first = seg
+	return first
 
 
 # ---------- Оновлення снарядів, мін, метеорів ----------
@@ -423,6 +485,8 @@ func _update_mines(delta: float) -> void:
 			_explode(mp, m["fx"], m["dmg"], m["radius"])
 			m["node"].queue_free()
 			m["rune"].queue_free()
+			for spike in m["spikes"]:
+				spike.queue_free()
 			mines.remove_at(i)
 
 
@@ -433,16 +497,42 @@ func _update_meteors(delta: float) -> void:
 		var k := clampf(float(m["t"]) / float(m["total"]), 0.0, 1.0)
 		m["rock"].position = m["pos"] + Vector3(0, 16.0 * k, 0)
 		m["rock"].rotation.x += delta * 6.0
+		m["tail"].position = m["rock"].position + Vector3(0, 0.9, 0)
 		if m["t"] <= 0.0:
 			_explode(m["pos"], m["fx"], m["dmg"], m["radius"])
 			m["marker"].queue_free()
 			m["rock"].queue_free()
+			m["tail"].queue_free()
 			meteors.remove_at(i)
 
 
 # Публічний вибух для чужих систем (бомба-підбір): та ж картинка, що у мін.
 func detonate(pos: Vector3, fx: String, dmg: float, radius: float) -> void:
 	_explode(pos, fx, dmg, radius)
+
+
+# Прибрати все летюче/вибухаюче (спуск на поверх): зброя і орбіти лишаються.
+func clear_field() -> void:
+	for b in bullets:
+		b["node"].queue_free()
+	bullets.clear()
+	for m in mines:
+		m["node"].queue_free()
+		m["rune"].queue_free()
+		for spike in m["spikes"]:
+			spike.queue_free()
+	mines.clear()
+	for m in meteors:
+		m["marker"].queue_free()
+		m["rock"].queue_free()
+		m["tail"].queue_free()
+	meteors.clear()
+	for r in rings:
+		r["node"].queue_free()
+	rings.clear()
+	for f in fxs:
+		f["node"].queue_free()
+	fxs.clear()
 
 
 func _explode(pos: Vector3, fx: String, dmg: float, radius: float) -> void:
@@ -462,14 +552,21 @@ func _explode(pos: Vector3, fx: String, dmg: float, radius: float) -> void:
 	ring.rotation.x = PI * 0.5
 	ring.scale = Vector3.ONE * 0.5
 	add_child(ring)
-	rings.append({"node": ring, "life": 0.25, "maxr": radius})
+	rings.append({"node": ring, "life": 0.25, "total": 0.25, "maxr": radius})
+	# друге, повільніше кільце слідом
+	var ring2 := Util.mesh_instance(Util.shared_torus(0.85, 1.0, 8, 28), Util.fresh_mat(GameData.EFFECT[fx]["color"], 2.0, 0.6))
+	ring2.position = pos + Vector3(0, 0.35, 0)
+	ring2.rotation.x = PI * 0.5
+	ring2.scale = Vector3.ONE * 0.5
+	add_child(ring2)
+	rings.append({"node": ring2, "life": 0.4, "total": 0.4, "maxr": radius * 0.7})
 
 
 func _update_rings(delta: float) -> void:
 	for i in range(rings.size() - 1, -1, -1):
 		var r: Dictionary = rings[i]
 		r["life"] -= delta
-		var k := clampf(float(r["life"]) / 0.25, 0.0, 1.0)
+		var k := clampf(float(r["life"]) / float(r.get("total", 0.25)), 0.0, 1.0)
 		var s := lerpf(float(r["maxr"]), 0.5, k)
 		var rnode: MeshInstance3D = r["node"]
 		rnode.scale = Vector3.ONE * s
