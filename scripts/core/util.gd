@@ -162,7 +162,7 @@ static func warmup() -> void:
 		shared_mat(c, 1.5, 1.0, true)
 		shared_mat(c, 2.0, 0.4)   # ореоли вогню/блискавки
 		shared_mat(c, 3.0)   # спалахи променів
+		shared_mat(c.darkened(0.55))   # темні основи мін
 	shared_mat(Color(1.0, 0.5, 0.15), 2.5, 0.6)   # хвіст метеора
-		shared_mat(c.darkened(0.55))
 	for key in GameData.EFFECT:
 		shared_mat(Color(1, 1, 1).lerp(GameData.EFFECT[key]["color"], 0.35), 3.0)
